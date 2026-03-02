@@ -66,15 +66,37 @@ _The UI shows an interactive diagram of the MX Master 3S. Click any button's hot
 
 ---
 
-## Quick Start (Portable — no install needed)
+## Download & Run
 
-1. **Download** the latest `LogiControl.zip` from the [Releases](https://github.com/YOUR_USERNAME/logi-control/releases) page
-2. **Extract** the zip to any folder  
+> **No install required.** Just download, extract, and double-click.
+
+### Steps
+
+1. **Download** → [**LogiControl.zip**](https://github.com/TomBadash/MouseControl/releases/latest/download/LogiControl.zip) (44 MB)
+2. **Extract** the zip to any folder (Desktop, Documents, wherever you like)
 3. **Run** `LogiControl.exe`
 
-That's it — no Python, no dependencies, no installer. The app stores its config in `%APPDATA%\LogiControl`.
+That's it — the app will open and start remapping your mouse buttons immediately.
 
-> **Note:** Windows SmartScreen may show a warning the first time. Click **More info → Run anyway**.
+### What to expect
+
+- The **settings window** opens showing your mouse diagram
+- A **system tray icon** appears near the clock (bottom-right)
+- Button remapping is **active immediately**
+- Closing the window **doesn't quit** the app — it keeps running in the tray
+- To fully quit: right-click the tray icon → **Quit LogiControl**
+
+### First-time notes
+
+- **Windows SmartScreen** may show a warning the first time → click **More info → Run anyway**
+- **Logitech Options+** must not be running (it conflicts with HID++ access)
+- Config is saved automatically to `%APPDATA%\LogiControl`
+
+<p align="center">
+  <a href="https://github.com/TomBadash/MouseControl/releases/latest/download/LogiControl.zip">
+    <img src="https://img.shields.io/badge/Download-LogiControl.zip-00d4aa?style=for-the-badge&logo=windows" alt="Download" />
+  </a>
+</p>
 
 ---
 
@@ -91,8 +113,8 @@ That's it — no Python, no dependencies, no installer. The app stores its confi
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/logi-control.git
-cd logi-control
+git clone https://github.com/TomBadash/MouseControl.git
+cd MouseControl
 
 # 2. Create a virtual environment
 python -m venv .venv
