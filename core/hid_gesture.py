@@ -31,15 +31,19 @@ _MAC_NATIVE_OK = False
 if sys.platform == "darwin":
     try:
         import ctypes
-        from ctypes import POINTER, byref, c_char_p, c_int, c_long, c_uint8, c_void_p
+        from ctypes import POINTER, byref, c_char_p, c_int, c_long, c_uint8, c_void_p, create_string_buffer
 
         _cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
         _iokit = ctypes.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
 
         _cf.CFNumberCreate.argtypes = [c_void_p, c_int, c_void_p]
         _cf.CFNumberCreate.restype = c_void_p
+        _cf.CFNumberGetValue.argtypes = [c_void_p, c_int, c_void_p]
+        _cf.CFNumberGetValue.restype = c_int
         _cf.CFStringCreateWithCString.argtypes = [c_void_p, c_char_p, c_int]
         _cf.CFStringCreateWithCString.restype = c_void_p
+        _cf.CFStringGetCString.argtypes = [c_void_p, c_void_p, c_long, c_int]
+        _cf.CFStringGetCString.restype = c_int
         _cf.CFDictionaryCreate.argtypes = [
             c_void_p, POINTER(c_void_p), POINTER(c_void_p), c_long, c_void_p, c_void_p,
         ]
@@ -63,6 +67,8 @@ if sys.platform == "darwin":
         _iokit.IOHIDDeviceOpen.restype = c_int
         _iokit.IOHIDDeviceClose.argtypes = [c_void_p, c_int]
         _iokit.IOHIDDeviceClose.restype = c_int
+        _iokit.IOHIDDeviceGetProperty.argtypes = [c_void_p, c_void_p]
+        _iokit.IOHIDDeviceGetProperty.restype = c_void_p
         _iokit.IOHIDDeviceSetReport.argtypes = [c_void_p, c_int, c_long, POINTER(c_uint8), c_long]
         _iokit.IOHIDDeviceSetReport.restype = c_int
         _iokit.IOHIDDeviceGetReport.argtypes = [c_void_p, c_int, c_long, POINTER(c_uint8), POINTER(c_long)]
@@ -102,6 +108,97 @@ if _MAC_NATIVE_OK:
         def _cfnumber(value):
             num = c_int(int(value))
             return _cf.CFNumberCreate(None, _K_CF_NUMBER_SINT32, byref(num))
+
+        @staticmethod
+        def _cfnumber_to_int(ref):
+            if not ref:
+                return 0
+            value = c_int()
+            ok = _cf.CFNumberGetValue(ref, _K_CF_NUMBER_SINT32, byref(value))
+            return int(value.value) if ok else 0
+
+        @staticmethod
+        def _cfstring_to_str(ref):
+            if not ref:
+                return None
+            buf = create_string_buffer(256)
+            ok = _cf.CFStringGetCString(ref, buf, len(buf), _K_CF_STRING_ENCODING_UTF8)
+            return buf.value.decode("utf-8", errors="replace") if ok else None
+
+        @classmethod
+        def _get_property(cls, device_ref, name):
+            key = cls._cfstring(name)
+            try:
+                return _iokit.IOHIDDeviceGetProperty(device_ref, key)
+            finally:
+                _cf.CFRelease(key)
+
+        @classmethod
+        def enumerate_infos(cls):
+            infos = []
+            manager = None
+            matching = None
+            matching_refs = []
+            try:
+                keys = [cls._cfstring("VendorID")]
+                values = [cls._cfnumber(LOGI_VID)]
+                key_array = (c_void_p * len(keys))(*keys)
+                value_array = (c_void_p * len(values))(*values)
+                matching = _cf.CFDictionaryCreate(
+                    None, key_array, value_array, len(keys), None, None
+                )
+                matching_refs = keys + values
+
+                manager = _iokit.IOHIDManagerCreate(None, 0)
+                if not manager:
+                    raise OSError("IOHIDManagerCreate failed")
+                _iokit.IOHIDManagerSetDeviceMatching(manager, matching)
+                res = _iokit.IOHIDManagerOpen(manager, 0)
+                if res != 0:
+                    raise OSError(f"IOHIDManagerOpen failed: 0x{res:08X}")
+
+                devices = _iokit.IOHIDManagerCopyDevices(manager)
+                if not devices:
+                    return infos
+                try:
+                    count = _cf.CFSetGetCount(devices)
+                    if count <= 0:
+                        return infos
+                    values_buf = (c_void_p * count)()
+                    _cf.CFSetGetValues(devices, values_buf)
+                    seen = set()
+                    for device_ref in values_buf:
+                        pid = cls._cfnumber_to_int(cls._get_property(device_ref, "ProductID"))
+                        up = cls._cfnumber_to_int(cls._get_property(device_ref, "PrimaryUsagePage"))
+                        usage = cls._cfnumber_to_int(cls._get_property(device_ref, "PrimaryUsage"))
+                        transport = cls._cfstring_to_str(cls._get_property(device_ref, "Transport"))
+                        product = cls._cfstring_to_str(cls._get_property(device_ref, "Product"))
+                        if not pid:
+                            continue
+                        key = (pid, up, usage, transport or "", product or "")
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        infos.append({
+                            "product_id": pid,
+                            "usage_page": up,
+                            "usage": usage,
+                            "transport": transport,
+                            "product_string": product,
+                            "source": "iokit-enumerate",
+                        })
+                finally:
+                    _cf.CFRelease(devices)
+            except Exception as exc:
+                print(f"[HidGesture] native enumerate error: {exc}")
+            finally:
+                if matching:
+                    _cf.CFRelease(matching)
+                if manager:
+                    _cf.CFRelease(manager)
+                for item in matching_refs:
+                    _cf.CFRelease(item)
+            return infos
 
         def open(self):
             keys = [
@@ -226,9 +323,52 @@ BT_DEV_IDX     = 0xFF        # device-index for direct Bluetooth
 FEAT_IROOT     = 0x0000
 FEAT_REPROG_V4 = 0x1B04      # Reprogrammable Controls V4
 FEAT_ADJ_DPI   = 0x2201      # Adjustable DPI
-CID_GESTURE    = 0x00C3      # "Mouse Gesture Button"
+DEFAULT_GESTURE_CID = 0x00C3      # "Mouse Gesture Button"
+FALLBACK_GESTURE_CIDS = (0x00D7,)
 
 MY_SW          = 0x0A        # arbitrary software-id used in our requests
+
+HIDPP_ERROR_NAMES = {
+    0x01: "UNKNOWN",
+    0x02: "INVALID_ARGUMENT",
+    0x03: "OUT_OF_RANGE",
+    0x04: "HARDWARE_ERROR",
+    0x05: "LOGITECH_ERROR",
+    0x06: "INVALID_FEATURE_INDEX",
+    0x07: "INVALID_FUNCTION",
+    0x08: "BUSY",
+    0x09: "UNSUPPORTED",
+}
+
+KNOWN_CID_NAMES = {
+    0x00C3: "Mouse Gesture Button",
+    0x00C4: "Smart Shift",
+    0x00D7: "Virtual Gesture Button",
+}
+
+KEY_FLAG_BITS = (
+    (0x0001, "mse"),
+    (0x0002, "fn"),
+    (0x0004, "nonstandard"),
+    (0x0008, "fn_sensitive"),
+    (0x0010, "reprogrammable"),
+    (0x0020, "divertable"),
+    (0x0040, "persist_divertable"),
+    (0x0080, "virtual"),
+    (0x0100, "raw_xy"),
+    (0x0200, "force_raw_xy"),
+    (0x0400, "analytics"),
+    (0x0800, "raw_wheel"),
+)
+
+MAPPING_FLAG_BITS = (
+    (0x0001, "diverted"),
+    (0x0004, "persist_diverted"),
+    (0x0010, "raw_xy_diverted"),
+    (0x0040, "force_raw_xy_diverted"),
+    (0x0100, "analytics_reporting"),
+    (0x0400, "raw_wheel"),
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────
@@ -255,6 +395,22 @@ def _parse(raw):
     return dev, feat, func, sw, params
 
 
+def _hex_bytes(data):
+    if not data:
+        return "-"
+    return " ".join(f"{int(b) & 0xFF:02X}" for b in data)
+
+
+def _format_flags(value, bit_names):
+    names = [name for bit, name in bit_names if value & bit]
+    return ",".join(names) if names else "none"
+
+
+def _format_cid(cid):
+    name = KNOWN_CID_NAMES.get(cid)
+    return f"0x{cid:04X} ({name})" if name else f"0x{cid:04X}"
+
+
 # ── Listener class ────────────────────────────────────────────────
 
 class HidGestureListener:
@@ -273,6 +429,8 @@ class HidGestureListener:
         self._feat_idx  = None          # feature index of REPROG_V4
         self._dpi_idx   = None          # feature index of ADJUSTABLE_DPI
         self._dev_idx   = BT_DEV_IDX
+        self._gesture_cid = DEFAULT_GESTURE_CID
+        self._gesture_candidates = [DEFAULT_GESTURE_CID]
         self._held      = False
         self._connected = False         # True while HID++ device is open
         self._rawxy_enabled = False
@@ -282,9 +440,11 @@ class HidGestureListener:
     # ── public API ────────────────────────────────────────────────
 
     def start(self):
-        if not HIDAPI_OK:
-            print("[HidGesture] 'hidapi' not installed — pip install hidapi")
+        if not HIDAPI_OK and not _MAC_NATIVE_OK:
+            print("[HidGesture] no HID backend available; install hidapi")
             return False
+        if not HIDAPI_OK and _MAC_NATIVE_OK:
+            print("[HidGesture] hidapi unavailable; using native macOS HID backend only")
         self._running = True
         self._thread = threading.Thread(
             target=self._main_loop, daemon=True, name="HidGesture")
@@ -307,16 +467,36 @@ class HidGestureListener:
 
     @staticmethod
     def _vendor_hid_infos():
-        """Return list of device-info dicts for Logitech vendor-page TLCs."""
+        """Return candidate Logitech HID interfaces from hidapi and macOS IOKit."""
         out = []
-        if not HIDAPI_OK:
-            return out
-        try:
-            for info in _hid.enumerate(LOGI_VID, 0):
-                if info.get("usage_page", 0) >= 0xFF00:
-                    out.append(info)
-        except Exception as exc:
-            print(f"[HidGesture] enumerate error: {exc}")
+        seen = set()
+
+        def add_info(info):
+            pid = int(info.get("product_id", 0) or 0)
+            up = int(info.get("usage_page", 0) or 0)
+            usage = int(info.get("usage", 0) or 0)
+            transport = info.get("transport") or ""
+            path = info.get("path") or b""
+            if isinstance(path, str):
+                path = path.encode("utf-8", errors="replace")
+            key = (pid, up, usage, transport, bytes(path))
+            if key in seen:
+                return
+            seen.add(key)
+            out.append(info)
+
+        if HIDAPI_OK:
+            try:
+                for info in _hid.enumerate(LOGI_VID, 0):
+                    if info.get("usage_page", 0) >= 0xFF00:
+                        add_info(dict(info, source="hidapi-enumerate"))
+            except Exception as exc:
+                print(f"[HidGesture] hidapi enumerate error: {exc}")
+
+        if sys.platform == "darwin" and _MAC_NATIVE_OK:
+            for info in _MacNativeHidDevice.enumerate_infos():
+                add_info(info)
+
         return out
 
     # ── low-level HID++ I/O ───────────────────────────────────────
@@ -346,15 +526,20 @@ class HidGestureListener:
 
     def _request(self, feat, func, params, timeout_ms=2000):
         """Send a long HID++ request, wait for matching response."""
+        req_params = list(params)
         try:
-            self._tx(LONG_ID, feat, func, params)
-        except Exception:
+            self._tx(LONG_ID, feat, func, req_params)
+        except Exception as exc:
+            print(f"[HidGesture] request tx failed feat=0x{feat:02X} func=0x{func:X} "
+                  f"params=[{_hex_bytes(req_params)}]: {exc}")
             return None
         deadline = time.time() + timeout_ms / 1000
         while time.time() < deadline:
             try:
                 raw = self._rx(min(500, timeout_ms))
-            except Exception:
+            except Exception as exc:
+                print(f"[HidGesture] request rx failed feat=0x{feat:02X} func=0x{func:X} "
+                      f"params=[{_hex_bytes(req_params)}]: {exc}")
                 return None
             if raw is None:
                 continue
@@ -366,13 +551,18 @@ class HidGestureListener:
             # HID++ error (feature-index 0xFF)
             if r_feat == 0xFF:
                 code = r_params[1] if len(r_params) > 1 else 0
-                print(f"[HidGesture] HID++ error 0x{code:02X} "
-                      f"for feat=0x{feat:02X} func={func}")
+                code_name = HIDPP_ERROR_NAMES.get(code, "UNKNOWN")
+                print(f"[HidGesture] HID++ error 0x{code:02X} ({code_name}) "
+                      f"for feat=0x{feat:02X} func=0x{func:X} "
+                      f"devIdx=0x{self._dev_idx:02X} req=[{_hex_bytes(req_params)}] "
+                      f"resp=[{_hex_bytes(r_params)}]")
                 return None
 
             expected_funcs = {func, (func + 1) & 0x0F}
             if r_feat == feat and r_sw == MY_SW and r_func in expected_funcs:
                 return msg
+        print(f"[HidGesture] request timeout feat=0x{feat:02X} func=0x{func:X} "
+              f"devIdx=0x{self._dev_idx:02X} params=[{_hex_bytes(req_params)}]")
         return None
 
     # ── feature helpers ───────────────────────────────────────────
@@ -388,35 +578,116 @@ class HidGestureListener:
                 return p[0]
         return None
 
-    def _set_cid_reporting(self, flags):
+    def _get_cid_reporting(self, cid):
         if self._feat_idx is None:
             return None
-        hi = (CID_GESTURE >> 8) & 0xFF
-        lo = CID_GESTURE & 0xFF
+        hi = (cid >> 8) & 0xFF
+        lo = cid & 0xFF
+        return self._request(self._feat_idx, 2, [hi, lo])
+
+    def _set_cid_reporting(self, cid, flags):
+        if self._feat_idx is None:
+            return None
+        hi = (cid >> 8) & 0xFF
+        lo = cid & 0xFF
         return self._request(self._feat_idx, 3, [hi, lo, flags, 0x00, 0x00])
 
+    def _discover_reprog_controls(self):
+        controls = []
+        if self._feat_idx is None:
+            return controls
+        resp = self._request(self._feat_idx, 0, [])
+        if not resp:
+            print("[HidGesture] Failed to read REPROG_V4 control count")
+            return controls
+        _, _, _, _, params = resp
+        count = params[0] if params else 0
+        print(f"[HidGesture] REPROG_V4 exposes {count} controls")
+        for index in range(count):
+            key_resp = self._request(self._feat_idx, 1, [index])
+            if not key_resp:
+                print(f"[HidGesture] Failed to read control info for index {index}")
+                continue
+            _, _, _, _, key_params = key_resp
+            if len(key_params) < 9:
+                print(f"[HidGesture] Short control info for index {index}: "
+                      f"[{_hex_bytes(key_params)}]")
+                continue
+            cid = (key_params[0] << 8) | key_params[1]
+            task = (key_params[2] << 8) | key_params[3]
+            flags = key_params[4] | (key_params[8] << 8)
+            pos = key_params[5]
+            group = key_params[6]
+            gmask = key_params[7]
+            control = {
+                "index": index,
+                "cid": cid,
+                "task": task,
+                "flags": flags,
+                "pos": pos,
+                "group": group,
+                "gmask": gmask,
+                "mapped_to": cid,
+                "mapping_flags": 0,
+            }
+            map_resp = self._get_cid_reporting(cid)
+            if map_resp:
+                _, _, _, _, map_params = map_resp
+                if len(map_params) >= 5:
+                    mapped_cid = (map_params[0] << 8) | map_params[1]
+                    map_flags = map_params[2]
+                    mapped_to = (map_params[3] << 8) | map_params[4]
+                    if len(map_params) >= 6:
+                        map_flags |= map_params[5] << 8
+                    control["mapped_to"] = mapped_to or mapped_cid or cid
+                    control["mapping_flags"] = map_flags
+            controls.append(control)
+            print(
+                "[HidGesture] Control "
+                f"idx={index} cid={_format_cid(cid)} task=0x{task:04X} "
+                f"flags=0x{flags:04X}[{_format_flags(flags, KEY_FLAG_BITS)}] "
+                f"group={group} gmask=0x{gmask:02X} pos={pos} "
+                f"mappedTo=0x{control['mapped_to']:04X} "
+                f"reporting=0x{control['mapping_flags']:04X}"
+                f"[{_format_flags(control['mapping_flags'], MAPPING_FLAG_BITS)}]"
+            )
+        return controls
+
+    def _choose_gesture_candidates(self, controls):
+        present = {c["cid"] for c in controls}
+        ordered = []
+        for cid in (DEFAULT_GESTURE_CID,) + FALLBACK_GESTURE_CIDS:
+            if cid in present and cid not in ordered:
+                ordered.append(cid)
+        return ordered or [DEFAULT_GESTURE_CID]
+
     def _divert(self):
-        """Divert gesture button CID 0x00C3 and enable raw XY when supported."""
+        """Divert the selected gesture control and enable raw XY when supported."""
         if self._feat_idx is None:
             return False
-        resp = self._set_cid_reporting(0x33)
-        if resp is not None:
-            self._rawxy_enabled = True
-            print(f"[HidGesture] Divert CID 0x{CID_GESTURE:04X} with RawXY: OK")
-            return True
-        self._rawxy_enabled = False
-        resp = self._set_cid_reporting(0x03)
-        ok = resp is not None
-        print(f"[HidGesture] Divert CID 0x{CID_GESTURE:04X}: "
-              f"{'OK' if ok else 'FAILED'}")
-        return ok
+        for cid in self._gesture_candidates:
+            self._gesture_cid = cid
+            resp = self._set_cid_reporting(cid, 0x33)
+            if resp is not None:
+                self._rawxy_enabled = True
+                print(f"[HidGesture] Divert { _format_cid(cid) } with RawXY: OK")
+                return True
+            self._rawxy_enabled = False
+            resp = self._set_cid_reporting(cid, 0x03)
+            ok = resp is not None
+            print(f"[HidGesture] Divert {_format_cid(cid)}: "
+                  f"{'OK' if ok else 'FAILED'}")
+            if ok:
+                return True
+        self._gesture_cid = DEFAULT_GESTURE_CID
+        return False
 
     def _undivert(self):
         """Restore default button behaviour (best-effort)."""
         if self._feat_idx is None or self._dev is None:
             return
-        hi = (CID_GESTURE >> 8) & 0xFF
-        lo = CID_GESTURE & 0xFF
+        hi = (self._gesture_cid >> 8) & 0xFF
+        lo = self._gesture_cid & 0xFF
         flags = 0x22 if self._rawxy_enabled else 0x02
         try:
             self._tx(LONG_ID, self._feat_idx, 3,
@@ -540,7 +811,7 @@ class HidGestureListener:
             cids.add(c)
             i += 2
 
-        gesture_now = CID_GESTURE in cids
+        gesture_now = self._gesture_cid in cids
 
         if gesture_now and not self._held:
             self._held = True
@@ -568,11 +839,30 @@ class HidGestureListener:
         if not infos:
             return False
 
+        print(f"[HidGesture] Candidate HID interfaces: {len(infos)}")
+        for info in infos:
+            pid = int(info.get("product_id", 0) or 0)
+            up = int(info.get("usage_page", 0) or 0)
+            usage = int(info.get("usage", 0) or 0)
+            transport = info.get("transport")
+            source = info.get("source", "unknown")
+            product = info.get("product_string") or "?"
+            print(f"[HidGesture] Candidate PID=0x{pid:04X} UP=0x{up:04X} "
+                  f"usage=0x{usage:04X} transport={transport or '-'} "
+                  f"source={source} product={product}")
+
         for info in infos:
             pid = info.get("product_id", 0)
             up = info.get("usage_page", 0)
             usage = info.get("usage", 0)
-            open_attempts = [("hidapi", info)]
+            self._feat_idx = None
+            self._dpi_idx = None
+            self._gesture_cid = DEFAULT_GESTURE_CID
+            self._gesture_candidates = [DEFAULT_GESTURE_CID]
+            self._rawxy_enabled = False
+            open_attempts = []
+            if info.get("path"):
+                open_attempts.append(("hidapi", info))
             if sys.platform == "darwin" and _MAC_NATIVE_OK:
                 open_attempts.extend([
                     ("iokit-exact", info),
@@ -620,6 +910,10 @@ class HidGestureListener:
                     self._feat_idx = fi
                     print(f"[HidGesture] Found REPROG_V4 @0x{fi:02X}  "
                           f"PID=0x{pid:04X} devIdx=0x{idx:02X}")
+                    controls = self._discover_reprog_controls()
+                    self._gesture_candidates = self._choose_gesture_candidates(controls)
+                    print("[HidGesture] Gesture CID candidates: "
+                          + ", ".join(_format_cid(cid) for cid in self._gesture_candidates))
                     # Also discover ADJUSTABLE_DPI
                     dpi_fi = self._find_feature(FEAT_ADJ_DPI)
                     if dpi_fi:
@@ -679,7 +973,10 @@ class HidGestureListener:
                 pass
             self._dev = None
             self._feat_idx = None
+            self._dpi_idx = None
             self._held = False
+            self._gesture_cid = DEFAULT_GESTURE_CID
+            self._gesture_candidates = [DEFAULT_GESTURE_CID]
             self._rawxy_enabled = False
             if self._connected:
                 self._connected = False
