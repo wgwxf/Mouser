@@ -18,8 +18,16 @@ Item {
     property string selectedProfile: backend.activeProfile
     property string selectedProfileLabel: ""
     property var selectedProfileMappingState: ({})
+    property string appSearchText: ""
+    property var filteredKnownApps: []
+    property var suggestedKnownApps: []
+    property var selectedKnownApp: null
 
-    Component.onCompleted: selectProfile(backend.activeProfile)
+    Component.onCompleted: {
+        selectProfile(backend.activeProfile)
+        refreshSuggestedApps()
+        refreshAppSearch()
+    }
 
     function refreshSelectedProfileMappings() {
         var mappings = backend.getProfileMappings(selectedProfile)
@@ -52,6 +60,203 @@ Item {
         selectedActionId = ""
     }
 
+    function appMatchesSearch(app, query) {
+        if (!query)
+            return false
+        var lowered = query.toLowerCase()
+        if ((app.label || "").toLowerCase().indexOf(lowered) !== -1)
+            return true
+        if ((app.id || "").toLowerCase().indexOf(lowered) !== -1)
+            return true
+        var aliases = app.aliases || []
+        for (var i = 0; i < aliases.length; i++) {
+            if ((aliases[i] || "").toLowerCase().indexOf(lowered) !== -1)
+                return true
+        }
+        return false
+    }
+
+    function appIsSystem(app) {
+        var path = (app && app.path) ? app.path : ""
+        return path.indexOf("/System/") === 0
+    }
+
+    function appLocationLabel(app) {
+        if (!app || !app.path)
+            return "Installed app"
+        if (app.path.indexOf("/Applications/") === 0)
+            return "Applications"
+        if (app.path.indexOf("/System/Applications/") === 0)
+            return "System Applications"
+        if (app.path.indexOf("/System/Library/CoreServices/") === 0)
+            return "macOS CoreServices"
+        if (app.path.indexOf("/Users/") === 0)
+            return app.path
+        return app.path
+    }
+
+    function isPreferredAppLabel(label) {
+        var preferred = [
+            "Google Chrome", "Safari", "Arc", "Firefox", "Visual Studio Code",
+            "Cursor", "Terminal", "iTerm2", "Warp", "Finder", "Figma",
+            "Slack", "Discord", "Spotify", "Notion", "Preview", "Calendar",
+            "Messages", "Music", "App Store", "System Settings"
+        ]
+        return preferred.indexOf(label || "") !== -1
+    }
+
+    function preferredAppRank(label) {
+        var preferred = [
+            "Google Chrome", "Safari", "Arc", "Firefox", "Visual Studio Code",
+            "Cursor", "Terminal", "iTerm2", "Warp", "Finder", "Figma",
+            "Slack", "Discord", "Spotify", "Notion", "Preview", "Calendar",
+            "Messages", "Music", "App Store", "System Settings"
+        ]
+        var idx = preferred.indexOf(label || "")
+        return idx === -1 ? 999 : idx
+    }
+
+    function suggestedAppScore(app) {
+        var score = preferredAppRank(app.label)
+        if (score === 999) {
+            if (app.path && app.path.indexOf("/Applications/") === 0)
+                score = 200
+            else if (app.path && app.path.indexOf("/Users/") === 0)
+                score = 260
+            else if (appIsSystem(app))
+                score = 500
+            else
+                score = 350
+        }
+
+        if (app.path && app.path.indexOf("/System/Library/CoreServices/") === 0)
+            score += 100
+        return score
+    }
+
+    function shouldSuggestApp(app) {
+        if (!app || !app.label)
+            return false
+        if (isPreferredAppLabel(app.label))
+            return true
+        if (app.path && app.path.indexOf("/Applications/") === 0)
+            return true
+        if (app.path && app.path.indexOf("/Users/") === 0)
+            return true
+        return false
+    }
+
+    function refreshSuggestedApps() {
+        var apps = backend.knownApps || []
+        var matches = []
+        for (var i = 0; i < apps.length; i++) {
+            if (!shouldSuggestApp(apps[i]))
+                continue
+            matches.push({
+                app: apps[i],
+                score: suggestedAppScore(apps[i])
+            })
+        }
+
+        matches.sort(function(a, b) {
+            if (a.score !== b.score)
+                return a.score - b.score
+            return (a.app.label || "").localeCompare(b.app.label || "")
+        })
+
+        var results = []
+        for (var j = 0; j < matches.length && j < 14; j++)
+            results.push(matches[j].app)
+        suggestedKnownApps = results
+    }
+
+    function appResultScore(app, query) {
+        var lowered = query.toLowerCase()
+        var label = (app.label || "").toLowerCase()
+        var score = 50
+
+        if (label === lowered)
+            score = 0
+        else if (label.indexOf(lowered) === 0)
+            score = 1
+        else if (label.indexOf(lowered) !== -1)
+            score = 2
+
+        var aliases = app.aliases || []
+        for (var i = 0; i < aliases.length; i++) {
+            var alias = (aliases[i] || "").toLowerCase()
+            if (alias === lowered)
+                score = Math.min(score, 3)
+            else if (alias.indexOf(lowered) === 0)
+                score = Math.min(score, 4)
+            else if (alias.indexOf(lowered) !== -1)
+                score = Math.min(score, 5)
+        }
+
+        if (appIsSystem(app))
+            score += 10
+        return score
+    }
+
+    function refreshAppSearch() {
+        var query = (appSearchText || "").trim()
+        var apps = backend.knownApps || []
+        var matches = []
+
+        if (query.length === 0) {
+            filteredKnownApps = []
+            return
+        }
+
+        for (var i = 0; i < apps.length; i++) {
+            if (appMatchesSearch(apps[i], query)) {
+                matches.push({
+                    app: apps[i],
+                    score: appResultScore(apps[i], query)
+                })
+            }
+        }
+
+        matches.sort(function(a, b) {
+            if (a.score !== b.score)
+                return a.score - b.score
+            return (a.app.label || "").localeCompare(b.app.label || "")
+        })
+
+        var results = []
+        for (var j = 0; j < matches.length && j < 12; j++)
+            results.push(matches[j].app)
+
+        filteredKnownApps = results
+    }
+
+    function selectKnownApp(app) {
+        selectedKnownApp = app
+    }
+
+    function syncSelectedKnownApp() {
+        if (!selectedKnownApp || !selectedKnownApp.id)
+            return
+        var apps = backend.knownApps || []
+        for (var i = 0; i < apps.length; i++) {
+            if (apps[i].id === selectedKnownApp.id) {
+                selectedKnownApp = apps[i]
+                return
+            }
+        }
+        selectedKnownApp = null
+    }
+
+    function openAddProfileDialog() {
+        selectedKnownApp = null
+        appSearchText = ""
+        filteredKnownApps = []
+        refreshSuggestedApps()
+        if (appSearchInput)
+            appSearchInput.text = ""
+        addAppDialog.open()
+    }
+
     Connections {
         target: backend
         function onProfilesChanged() {
@@ -69,6 +274,13 @@ Item {
         function onActiveProfileChanged() {
             // Auto-select when engine switches profile
             selectProfile(backend.activeProfile)
+        }
+        function onKnownAppsChanged() {
+            syncSelectedKnownApp()
+            refreshSuggestedApps()
+            refreshAppSearch()
+            if (addAppDialog.visible)
+                addAppDialog.ensureSelection()
         }
     }
 
@@ -181,6 +393,53 @@ Item {
         return "Tap: " + gestureTapActionLabel + " | Swipes configured"
     }
 
+    function hotspotSublabel(hotspot) {
+        if (!hotspot)
+            return ""
+        if (hotspot.summaryType === "gesture")
+            return gestureSummary()
+        if (hotspot.summaryType === "hscroll")
+            return "L: " + hscrollLeftActionLabel + " | R: " + hscrollRightActionLabel
+        return actionFor(hotspot.buttonKey)
+    }
+
+    function layoutHasButton(buttonKey) {
+        var hotspots = backend.deviceHotspots
+        for (var i = 0; i < hotspots.length; i++) {
+            if (hotspots[i].buttonKey === buttonKey)
+                return true
+        }
+        return false
+    }
+
+    function manualLayoutChoiceIndex(layoutKey) {
+        var choices = backend.manualLayoutChoices
+        for (var i = 0; i < choices.length; i++) {
+            if (choices[i].key === layoutKey)
+                return i
+        }
+        return 0
+    }
+
+    function currentLayoutChoiceLabel() {
+        var idx = manualLayoutChoiceIndex(backend.deviceLayoutOverrideKey)
+        var choices = backend.manualLayoutChoices
+        if (idx >= 0 && idx < choices.length)
+            return choices[idx].label
+        return "Auto-detect"
+    }
+
+    Connections {
+        target: backend
+        function onDeviceLayoutChanged() {
+            if (selectedButton !== "" && !layoutHasButton(selectedButton)) {
+                selectedButton = ""
+                selectedButtonName = ""
+                selectedActionId = ""
+            }
+        }
+    }
+
     // ── Main two-column layout ────────────────────────────────
     Row {
         anchors.fill: parent
@@ -191,7 +450,7 @@ Item {
         // ══════════════════════════════════════════════════════
         Rectangle {
             id: leftPanel
-            width: 220
+            width: 248
             height: parent.height
             color: theme.bgCard
             border.width: 1; border.color: theme.border
@@ -221,7 +480,7 @@ Item {
                 ListView {
                     id: profileList
                     width: parent.width
-                    height: parent.height - 110
+                    height: parent.height - 54 - addProfileSection.height
                     model: backend.profiles
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
@@ -261,14 +520,11 @@ Item {
                                 Repeater {
                                     model: modelData.appIcons
                                     delegate: Image {
-                                        source: modelData
-                                                ? "file:///" + applicationDirPath
-                                                  + "/images/" + modelData
-                                                : ""
+                                        source: modelData || ""
                                         width: 24; height: 24
                                         sourceSize { width: 24; height: 24 }
                                         fillMode: Image.PreserveAspectFit
-                                        visible: modelData !== ""
+                                        visible: source !== ""
                                         smooth: true; mipmap: true
                                         asynchronous: true
                                         cache: true
@@ -292,8 +548,8 @@ Item {
                                     width: leftPanel.width - 70
                                 }
                                 Text {
-                                    text: modelData.apps.length
-                                          ? modelData.apps.join(", ")
+                                    text: modelData.displayApps.length
+                                          ? modelData.displayApps.join(", ")
                                           : "All applications"
                                     font { family: uiState.fontFamily; pixelSize: 9 }
                                     color: theme.textSecondary
@@ -317,53 +573,69 @@ Item {
 
                 // Add profile controls
                 Item {
-                    width: parent.width; height: 52
+                    id: addProfileSection
+                    width: parent.width
+                    height: 88
 
-                    RowLayout {
+                    Rectangle {
                         anchors {
                             fill: parent
-                            leftMargin: 8; rightMargin: 8
+                            leftMargin: 8
+                            rightMargin: 8
+                            topMargin: 10
+                            bottomMargin: 10
                         }
-                        spacing: 4
+                        radius: 14
+                        color: theme.bgSubtle
+                        border.width: 1
+                        border.color: theme.border
 
-                        ComboBox {
-                            id: addCombo
-                            Layout.fillWidth: true
-                            model: {
-                                var apps = backend.knownApps
-                                var labels = []
-                                for (var i = 0; i < apps.length; i++)
-                                    labels.push(apps[i].label)
-                                return labels
-                            }
-                            Material.accent: theme.accent
-                            font { family: uiState.fontFamily; pixelSize: 10 }
-                        }
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 10
 
-                        Rectangle {
-                            Layout.preferredWidth: 42
-                            Layout.preferredHeight: 28
-                            radius: 8
-                            color: addBtnMa.containsMouse
-                                   ? theme.accentHover : theme.accent
+                            Rectangle {
+                                width: 30
+                                height: 30
+                                radius: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: Qt.rgba(0, 0.83, 0.67, uiState.darkMode ? 0.16 : 0.14)
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: "+"
-                                font { family: uiState.fontFamily; pixelSize: 16; bold: true }
-                                color: theme.bgSidebar
-                            }
-
-                            MouseArea {
-                                id: addBtnMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (addCombo.currentText)
-                                        backend.addProfile(addCombo.currentText)
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "+"
+                                    font { family: uiState.fontFamily; pixelSize: 16; bold: true }
+                                    color: theme.accent
                                 }
                             }
+
+                            Column {
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
+
+                                Text {
+                                    text: "Add App Profile"
+                                    font { family: uiState.fontFamily; pixelSize: 11; bold: true }
+                                    color: theme.textPrimary
+                                }
+
+                                Text {
+                                    text: "Search installed apps or browse for one manually"
+                                    font { family: uiState.fontFamily; pixelSize: 9 }
+                                    color: theme.textSecondary
+                                    elide: Text.ElideRight
+                                    width: leftPanel.width - 110
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: openAddProfileDialog()
                         }
                     }
                 }
@@ -431,7 +703,11 @@ Item {
                                 }
 
                                 Text {
-                                    text: "Click a dot to configure its action"
+                                    text: !backend.mouseConnected
+                                          ? "Turn on your Logitech mouse to start customizing buttons"
+                                          : backend.hasInteractiveDeviceLayout
+                                            ? "Click a dot to configure its action"
+                                            : "Choose a layout mode below while we build a dedicated overlay"
                                     font { family: uiState.fontFamily; pixelSize: 12 }
                                     color: theme.textSecondary
                                 }
@@ -571,6 +847,60 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 
+                    Rectangle {
+                        visible: backend.mouseConnected
+                                 && (!backend.hasInteractiveDeviceLayout
+                                 || backend.deviceLayoutOverrideKey !== ""
+                                 )
+                        width: Math.min(parent.width - 56, 700)
+                        anchors.left: parent.left
+                        anchors.leftMargin: 28
+                        height: layoutModeCol.implicitHeight + 28
+                        radius: 14
+                        color: theme.bgCard
+                        border.width: 1
+                        border.color: theme.border
+
+                        Column {
+                            id: layoutModeCol
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            spacing: 8
+
+                            Text {
+                                text: "Layout mode"
+                                font { family: uiState.fontFamily; pixelSize: 13; bold: true }
+                                color: theme.textPrimary
+                            }
+
+                            Text {
+                                width: parent.width
+                                wrapMode: Text.WordWrap
+                                text: backend.deviceLayoutOverrideKey !== ""
+                                      ? "Experimental override active: " + currentLayoutChoiceLabel()
+                                        + ". Switch back to Auto-detect if the hotspot map does not line up."
+                                      : backend.deviceLayoutNote
+                                font { family: uiState.fontFamily; pixelSize: 11 }
+                                color: theme.textSecondary
+                            }
+
+                            ComboBox {
+                                id: layoutOverrideCombo
+                                width: Math.min(parent.width, 320)
+                                model: backend.manualLayoutChoices
+                                textRole: "label"
+                                Material.accent: theme.accent
+                                font { family: uiState.fontFamily; pixelSize: 11 }
+                                currentIndex: manualLayoutChoiceIndex(backend.deviceLayoutOverrideKey)
+                                onActivated: function(index) {
+                                    backend.setDeviceLayoutOverride(
+                                        backend.manualLayoutChoices[index].key
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // ── Mouse image with hotspots ─────────────
                     Item {
                         id: mouseImageArea
@@ -584,11 +914,12 @@ Item {
 
                         Image {
                             id: mouseImg
-                            source: "file:///" + applicationDirPath + "/images/mouse.png"
+                            source: "file:///" + applicationDirPath + "/images/" + backend.deviceImageAsset
                             fillMode: Image.PreserveAspectFit
-                            width: 460
-                            height: 360
+                            width: backend.deviceImageWidth
+                            height: backend.deviceImageHeight
                             anchors.centerIn: parent
+                            visible: backend.mouseConnected
                             smooth: true
                             mipmap: true
                             asynchronous: true
@@ -598,61 +929,158 @@ Item {
                             property real offY: (height - paintedHeight) / 2
                         }
 
-                        // Hotspot dots
-                        HotspotDot {
-                            anchors.fill: mouseImageArea
-                            imgItem: mouseImg
-                            normX: 0.35; normY: 0.4
-                            buttonKey: "middle"
-                            label: "Middle button"
-                            sublabel: actionFor("middle")
-                            labelSide: "right"
-                            labelOffX: 100; labelOffY: -160
+                        Rectangle {
+                            visible: !backend.mouseConnected
+                            width: Math.min(parent.width - 120, 760)
+                            height: emptyStateCol.implicitHeight + 52
+                            radius: 24
+                            anchors.centerIn: parent
+                            color: theme.bgCard
+                            border.width: 1
+                            border.color: theme.border
+
+                            Column {
+                                id: emptyStateCol
+                                anchors.fill: parent
+                                anchors.margins: 26
+                                spacing: 14
+
+                                Rectangle {
+                                    width: waitingRow.implicitWidth + 16
+                                    height: 28
+                                    radius: 14
+                                    color: Qt.rgba(0.9, 0.3, 0.3, uiState.darkMode ? 0.18 : 0.10)
+
+                                    Row {
+                                        id: waitingRow
+                                        anchors.centerIn: parent
+                                        spacing: 8
+
+                                        Rectangle {
+                                            width: 8
+                                            height: 8
+                                            radius: 4
+                                            color: "#e05555"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+
+                                        Text {
+                                            text: "Waiting for connection"
+                                            font { family: uiState.fontFamily; pixelSize: 11; bold: true }
+                                            color: "#e05555"
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    width: parent.width
+                                    text: "Connect your Logitech mouse"
+                                    wrapMode: Text.WordWrap
+                                    font { family: uiState.fontFamily; pixelSize: 26; bold: true }
+                                    color: theme.textPrimary
+                                }
+
+                                Text {
+                                    width: Math.min(parent.width, 680)
+                                    text: "Mouser will detect the active device, unlock button mapping, and enable the correct layout mode as soon as the mouse is available."
+                                    wrapMode: Text.WordWrap
+                                    font { family: uiState.fontFamily; pixelSize: 13 }
+                                    color: theme.textSecondary
+                                }
+
+                                Flow {
+                                    width: parent.width
+                                    spacing: 10
+
+                                    Rectangle {
+                                        width: firstHint.implicitWidth + 20
+                                        height: 30
+                                        radius: 15
+                                        color: theme.bgSubtle
+                                        border.width: 1
+                                        border.color: theme.border
+
+                                        Text {
+                                            id: firstHint
+                                            anchors.centerIn: parent
+                                            text: "Layout mode appears automatically"
+                                            font { family: uiState.fontFamily; pixelSize: 11 }
+                                            color: theme.textSecondary
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: secondHint.implicitWidth + 20
+                                        height: 30
+                                        radius: 15
+                                        color: theme.bgSubtle
+                                        border.width: 1
+                                        border.color: theme.border
+
+                                        Text {
+                                            id: secondHint
+                                            anchors.centerIn: parent
+                                            text: "Per-device settings stay separate"
+                                            font { family: uiState.fontFamily; pixelSize: 11 }
+                                            color: theme.textSecondary
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        HotspotDot {
-                            anchors.fill: mouseImageArea
-                            imgItem: mouseImg
-                            normX: 0.7; normY: 0.63
-                            buttonKey: "gesture"
-                            label: "Gesture button"
-                            sublabel: gestureSummary()
-                            labelSide: "left"
-                            labelOffX: -200; labelOffY: 60
+                        Repeater {
+                            model: backend.deviceHotspots
+
+                            delegate: HotspotDot {
+                                required property int index
+                                readonly property var hotspot: backend.deviceHotspots[index]
+                                anchors.fill: mouseImageArea
+                                imgItem: mouseImg
+                                normX: Number(hotspot["normX"] || 0)
+                                normY: Number(hotspot["normY"] || 0)
+                                buttonKey: String(hotspot["buttonKey"] || "")
+                                isHScroll: hotspot["isHScroll"] === true
+                                label: String(hotspot["label"] || hotspot["buttonKey"] || "")
+                                sublabel: hotspotSublabel(hotspot)
+                                labelSide: String(hotspot["labelSide"] || "right")
+                                labelOffX: hotspot["labelOffX"] === undefined ? 120 : Number(hotspot["labelOffX"])
+                                labelOffY: hotspot["labelOffY"] === undefined ? -30 : Number(hotspot["labelOffY"])
+                            }
                         }
 
-                        HotspotDot {
-                            anchors.fill: mouseImageArea
-                            imgItem: mouseImg
-                            normX: 0.6; normY: 0.48
-                            buttonKey: "xbutton2"
-                            label: "Forward button"
-                            sublabel: actionFor("xbutton2")
-                            labelSide: "left"
-                            labelOffX: -300; labelOffY: 0
-                        }
+                        Rectangle {
+                            visible: backend.mouseConnected && !backend.hasInteractiveDeviceLayout
+                            width: Math.min(420, parent.width - 48)
+                            height: fallbackCol.implicitHeight + 32
+                            radius: 16
+                            color: theme.bgCard
+                            border.width: 1
+                            border.color: theme.border
+                            anchors.centerIn: parent
 
-                        HotspotDot {
-                            anchors.fill: mouseImageArea
-                            imgItem: mouseImg
-                            normX: 0.65; normY: 0.4
-                            buttonKey: "xbutton1"
-                            label: "Back button"
-                            sublabel: actionFor("xbutton1")
-                            labelSide: "right"
-                            labelOffX: 200; labelOffY: 50
-                        }
+                            Column {
+                                id: fallbackCol
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 10
 
-                        HotspotDot {
-                            anchors.fill: mouseImageArea
-                            imgItem: mouseImg
-                            normX: 0.6; normY: 0.375
-                            buttonKey: "hscroll_left"
-                            isHScroll: true
-                            label: "Horizontal scroll"
-                            sublabel: "L: " + hscrollLeftActionLabel + " | R: " + hscrollRightActionLabel
-                            labelSide: "right"
-                            labelOffX: 200; labelOffY: -50
+                                Text {
+                                    text: "Interactive layout coming later"
+                                    width: parent.width
+                                    font { family: uiState.fontFamily; pixelSize: 15; bold: true }
+                                    color: theme.textPrimary
+                                }
+
+                                Text {
+                                    text: backend.deviceLayoutNote
+                                    width: parent.width
+                                    wrapMode: Text.WordWrap
+                                    font { family: uiState.fontFamily; pixelSize: 12 }
+                                    color: theme.textSecondary
+                                }
+
+                            }
                         }
                     }
 
@@ -1249,6 +1677,482 @@ Item {
                     }
 
                     Item { width: 1; height: 24 }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: addAppDialog
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        title: ""
+        width: 720
+        height: 520
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        padding: 0
+        property bool searching: appSearchText.trim().length > 0
+        property var visibleApps: searching ? filteredKnownApps : suggestedKnownApps
+
+        function ensureSelection() {
+            var apps = visibleApps || []
+            if (!apps.length) {
+                selectedKnownApp = null
+                return
+            }
+
+            if (!selectedKnownApp || !selectedKnownApp.id) {
+                selectedKnownApp = apps[0]
+                return
+            }
+
+            for (var i = 0; i < apps.length; i++) {
+                if (apps[i].id === selectedKnownApp.id)
+                    return
+            }
+
+            selectedKnownApp = apps[0]
+        }
+
+        function selectedIndex() {
+            var apps = visibleApps || []
+            if (!selectedKnownApp || !selectedKnownApp.id)
+                return -1
+            for (var i = 0; i < apps.length; i++) {
+                if (apps[i].id === selectedKnownApp.id)
+                    return i
+            }
+            return -1
+        }
+
+        function moveSelection(delta) {
+            var apps = visibleApps || []
+            if (!apps.length)
+                return
+
+            var current = selectedIndex()
+            if (current === -1)
+                current = 0
+
+            var next = current + delta
+            if (next < 0)
+                next = 0
+            if (next >= apps.length)
+                next = apps.length - 1
+
+            selectedKnownApp = apps[next]
+            if (appResultsList)
+                appResultsList.positionViewAtIndex(next, ListView.Contain)
+        }
+
+        onOpened: {
+            if (appSearchInput) {
+                appSearchInput.text = ""
+                appSearchInput.forceActiveFocus()
+            }
+            refreshSuggestedApps()
+            refreshAppSearch()
+            ensureSelection()
+            backend.refreshKnownAppsSilently()
+        }
+        onVisibleAppsChanged: ensureSelection()
+
+        background: Rectangle {
+            radius: 24
+            color: theme.bgElevated
+            border.width: 1
+            border.color: theme.border
+        }
+
+        contentItem: Item {
+            width: addAppDialog.width
+            height: addAppDialog.height
+
+            Item {
+                id: addDialogHeader
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.topMargin: 14
+                anchors.leftMargin: 24
+                anchors.rightMargin: 24
+                height: 42
+
+                Column {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 3
+
+                    Text {
+                        text: "Add App Profile"
+                        font { family: uiState.fontFamily; pixelSize: 17; bold: true }
+                        color: theme.textPrimary
+                    }
+
+                    Text {
+                        text: "Choose an app. Mouser will switch to this profile when that app is focused."
+                        font { family: uiState.fontFamily; pixelSize: 11 }
+                        color: theme.textSecondary
+                    }
+                }
+
+                Rectangle {
+                    width: 34
+                    height: 34
+                    radius: 12
+                    anchors.right: parent.right
+                    anchors.rightMargin: 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: closeAddDialogMa.containsMouse
+                           ? Qt.rgba(1, 1, 1, uiState.darkMode ? 0.08 : 0.65)
+                           : "transparent"
+
+                    AppIcon {
+                        anchors.centerIn: parent
+                        width: 14
+                        height: 14
+                        name: "x"
+                        iconColor: theme.textSecondary
+                    }
+
+                    MouseArea {
+                        id: closeAddDialogMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: addAppDialog.close()
+                    }
+                }
+            }
+
+            Rectangle {
+                id: searchField
+                anchors.top: addDialogHeader.bottom
+                anchors.topMargin: 12
+                anchors.left: parent.left
+                anchors.leftMargin: 24
+                anchors.right: browseButton.left
+                anchors.rightMargin: 12
+                height: 46
+                radius: 16
+                color: theme.bgSubtle
+                border.width: 1
+                border.color: appSearchInput.activeFocus ? theme.accent : theme.border
+
+                TextInput {
+                    id: appSearchInput
+                    anchors.fill: parent
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    color: theme.textPrimary
+                    font { family: uiState.fontFamily; pixelSize: 12 }
+                    verticalAlignment: TextInput.AlignVCenter
+                    selectByMouse: true
+                    clip: true
+
+                    onTextChanged: {
+                        appSearchText = text
+                        refreshAppSearch()
+                        addAppDialog.ensureSelection()
+                    }
+
+                    Keys.onPressed: function(event) {
+                        if (event.key === Qt.Key_Down) {
+                            addAppDialog.moveSelection(1)
+                            event.accepted = true
+                        } else if (event.key === Qt.Key_Up) {
+                            addAppDialog.moveSelection(-1)
+                            event.accepted = true
+                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                            if (selectedKnownApp) {
+                                backend.addProfile(selectedKnownApp.id)
+                                addAppDialog.close()
+                            }
+                            event.accepted = true
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Search apps by name"
+                    font { family: uiState.fontFamily; pixelSize: 12 }
+                    color: theme.textDim
+                    visible: !appSearchInput.text.length
+                }
+            }
+
+            Rectangle {
+                id: browseButton
+                anchors.top: searchField.top
+                anchors.right: parent.right
+                anchors.rightMargin: 24
+                width: 112
+                height: 46
+                radius: 16
+                color: browseDialogMa.containsMouse
+                       ? Qt.rgba(1, 1, 1, uiState.darkMode ? 0.08 : 0.55)
+                       : theme.bgSubtle
+                border.width: 1
+                border.color: theme.border
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "Browse"
+                    font { family: uiState.fontFamily; pixelSize: 12; bold: true }
+                    color: theme.textPrimary
+                }
+
+                MouseArea {
+                    id: browseDialogMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        addAppDialog.close()
+                        backend.browseForAppProfile()
+                    }
+                }
+            }
+
+            Item {
+                id: resultsBlock
+                anchors.top: searchField.bottom
+                anchors.topMargin: 18
+                anchors.left: parent.left
+                anchors.leftMargin: 24
+                anchors.right: parent.right
+                anchors.rightMargin: 24
+                anchors.bottom: footerRow.top
+                anchors.bottomMargin: 20
+
+                Row {
+                    id: resultsHeader
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    height: 22
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: addAppDialog.searching ? "Search Results" : "Suggested Apps"
+                        font { family: uiState.fontFamily; pixelSize: 11; bold: true }
+                        color: theme.textPrimary
+                    }
+
+                    Rectangle {
+                        width: resultCountText.implicitWidth + 16
+                        height: 22
+                        radius: 11
+                        color: Qt.rgba(0, 0.83, 0.67, uiState.darkMode ? 0.12 : 0.14)
+
+                        Text {
+                            id: resultCountText
+                            anchors.centerIn: parent
+                            text: addAppDialog.visibleApps.length
+                            font { family: uiState.fontFamily; pixelSize: 10; bold: true }
+                            color: theme.accent
+                        }
+                    }
+                }
+
+                Rectangle {
+                    anchors.top: resultsHeader.bottom
+                    anchors.topMargin: 12
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    radius: 20
+                    color: theme.bg
+                    border.width: 1
+                    border.color: theme.border
+
+                    ListView {
+                        id: appResultsList
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        clip: true
+                        model: addAppDialog.visibleApps
+                        spacing: 6
+                        visible: addAppDialog.visibleApps.length > 0
+                        boundsBehavior: Flickable.StopAtBounds
+
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: 58
+                            radius: 15
+                            color: selectedKnownApp && selectedKnownApp.id === modelData.id
+                                   ? Qt.rgba(0, 0.83, 0.67, uiState.darkMode ? 0.16 : 0.12)
+                                   : appRowMa.containsMouse
+                                     ? Qt.rgba(1, 1, 1, uiState.darkMode ? 0.06 : 0.6)
+                                     : "transparent"
+                            border.width: selectedKnownApp && selectedKnownApp.id === modelData.id ? 1 : 0
+                            border.color: theme.accent
+
+                            Row {
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+                                spacing: 12
+
+                                Image {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    source: modelData.iconSource || ""
+                                    width: 24
+                                    height: 24
+                                    sourceSize.width: 24
+                                    sourceSize.height: 24
+                                    fillMode: Image.PreserveAspectFit
+                                    smooth: true
+                                    visible: source !== ""
+                                }
+
+                                Column {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 2
+
+                                    Text {
+                                        text: modelData.label || ""
+                                        font { family: uiState.fontFamily; pixelSize: 13; bold: true }
+                                        color: theme.textPrimary
+                                        elide: Text.ElideRight
+                                        width: 470
+                                    }
+
+                                    Text {
+                                        text: appLocationLabel(modelData)
+                                        font { family: uiState.fontFamily; pixelSize: 10 }
+                                        color: theme.textSecondary
+                                        elide: Text.ElideRight
+                                        width: 470
+                                    }
+                                }
+
+                                Item {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 1
+                                    height: 1
+                                }
+                            }
+
+                            MouseArea {
+                                id: appRowMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: selectedKnownApp = modelData
+                                onDoubleClicked: {
+                                    selectedKnownApp = modelData
+                                    backend.addProfile(modelData.id)
+                                    addAppDialog.close()
+                                }
+                            }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width - 48
+                        anchors.centerIn: parent
+                        spacing: 8
+                        visible: addAppDialog.visibleApps.length === 0
+
+                        Text {
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            text: addAppDialog.searching
+                                  ? "No apps matched that search."
+                                  : "No suggested apps available."
+                            font { family: uiState.fontFamily; pixelSize: 13; bold: true }
+                            color: theme.textPrimary
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            text: addAppDialog.searching
+                                  ? "Try a different name, or use Browse to choose the app directly."
+                                  : "Use the search box above, or browse to choose an app directly."
+                            font { family: uiState.fontFamily; pixelSize: 11 }
+                            color: theme.textSecondary
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+            }
+
+            Item {
+                id: footerRow
+                anchors.left: parent.left
+                anchors.leftMargin: 24
+                anchors.right: parent.right
+                anchors.rightMargin: 24
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 24
+                height: 48
+
+                Rectangle {
+                    id: createButton
+                    anchors.right: parent.right
+                    width: 160
+                    height: parent.height
+                    radius: 16
+                    color: selectedKnownApp
+                           ? (createDialogMa.containsMouse ? theme.accentHover : theme.accent)
+                           : Qt.rgba(0, 0.83, 0.67, 0.22)
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Create Profile"
+                        font { family: uiState.fontFamily; pixelSize: 12; bold: true }
+                        color: selectedKnownApp ? theme.bgSidebar : theme.textSecondary
+                    }
+
+                    MouseArea {
+                        id: createDialogMa
+                        anchors.fill: parent
+                        enabled: !!selectedKnownApp
+                        hoverEnabled: enabled
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: {
+                            if (selectedKnownApp) {
+                                backend.addProfile(selectedKnownApp.id)
+                                addAppDialog.close()
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    anchors.right: createButton.left
+                    anchors.rightMargin: 10
+                    width: 108
+                    height: parent.height
+                    radius: 16
+                    color: cancelDialogMa.containsMouse
+                           ? Qt.rgba(1, 1, 1, uiState.darkMode ? 0.08 : 0.55)
+                           : theme.bgSubtle
+                    border.width: 1
+                    border.color: theme.border
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Cancel"
+                        font { family: uiState.fontFamily; pixelSize: 12; bold: true }
+                        color: theme.textPrimary
+                    }
+
+                    MouseArea {
+                        id: cancelDialogMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: addAppDialog.close()
+                    }
                 }
             }
         }
