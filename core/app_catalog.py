@@ -22,6 +22,8 @@ else:
     winreg = None
 
 
+# Intentionally curated list of high-value Windows apps. The goal is better
+# profile switching for common apps, not exhaustive OS-wide discovery.
 WINDOWS_APP_SPECS = [
     {
         "id": "msedge.exe",
@@ -58,19 +60,6 @@ WINDOWS_APP_SPECS = [
         "path_hints": [
             r"%ProgramFiles%\Mozilla Firefox\firefox.exe",
             r"%ProgramFiles(x86)%\Mozilla Firefox\firefox.exe",
-        ],
-    },
-    {
-        "id": "brave.exe",
-        "label": "Brave",
-        "legacy_icon": "",
-        "executables": ["brave.exe"],
-        "aliases": ["Brave", "Brave Browser"],
-        "display_names": ["Brave", "Brave Browser"],
-        "path_hints": [
-            r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe",
-            r"%ProgramFiles(x86)%\BraveSoftware\Brave-Browser\Application\brave.exe",
-            r"%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe",
         ],
     },
     {
@@ -131,30 +120,6 @@ WINDOWS_APP_SPECS = [
         "path_hints": [
             r"%AppData%\Spotify\Spotify.exe",
             r"%LocalAppData%\Microsoft\WindowsApps\Spotify.exe",
-        ],
-    },
-    {
-        "id": "Notion.exe",
-        "label": "Notion",
-        "legacy_icon": "",
-        "executables": ["Notion.exe"],
-        "aliases": ["Notion"],
-        "display_names": ["Notion"],
-        "path_hints": [
-            r"%LocalAppData%\Programs\Notion\Notion.exe",
-            r"%LocalAppData%\Notion\Notion.exe",
-        ],
-    },
-    {
-        "id": "Figma.exe",
-        "label": "Figma",
-        "legacy_icon": "",
-        "executables": ["Figma.exe"],
-        "aliases": ["Figma"],
-        "display_names": ["Figma"],
-        "path_hints": [
-            r"%LocalAppData%\Figma\Figma.exe",
-            r"%LocalAppData%\Programs\Figma\Figma.exe",
         ],
     },
     {
