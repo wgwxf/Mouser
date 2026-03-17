@@ -1552,7 +1552,7 @@ Item {
             refreshSuggestedApps()
             refreshAppSearch()
             ensureSelection()
-            backend.refreshKnownApps()
+            backend.refreshKnownAppsSilently()
         }
         onVisibleAppsChanged: ensureSelection()
 

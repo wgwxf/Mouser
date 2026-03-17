@@ -1,4 +1,5 @@
 import json
+import ntpath
 import tempfile
 import unittest
 from pathlib import Path
@@ -218,6 +219,40 @@ class AppCatalogTests(unittest.TestCase):
                     r"C:\\Users\\luca\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
                 ),
                 "terminal",
+            )
+
+    def test_windows_registry_match_rejects_edge_runtime_helper(self):
+        spec = next(item for item in app_catalog.WINDOWS_APP_SPECS if item["id"] == "msedge.exe")
+        entry = {
+            "display_name": "Microsoft Edge WebView2 Runtime",
+            "display_icon": "",
+            "install_location": r"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application",
+        }
+
+        self.assertFalse(app_catalog._windows_registry_matches(spec, entry))
+
+    def test_windows_registry_path_prefers_exact_executable_match(self):
+        spec = next(item for item in app_catalog.WINDOWS_APP_SPECS if item["id"] == "msedge.exe")
+        entries = [
+            {
+                "display_name": "Microsoft Edge",
+                "display_icon": r"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\msedgewebview2.exe",
+                "install_location": r"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application",
+            },
+            {
+                "display_name": "Microsoft Edge",
+                "display_icon": r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                "install_location": r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application",
+            },
+        ]
+
+        with (
+            patch("core.app_catalog.os.path.basename", ntpath.basename),
+            patch("core.app_catalog.os.path.abspath", lambda value: value),
+        ):
+            self.assertEqual(
+                app_catalog._windows_registry_path(spec, entries),
+                r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
             )
 
 

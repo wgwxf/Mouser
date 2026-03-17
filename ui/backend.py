@@ -540,6 +540,11 @@ class Backend(QObject):
         self.knownAppsChanged.emit()
         self.statusMessage.emit("Apps refreshed")
 
+    @Slot()
+    def refreshKnownAppsSilently(self):
+        self._refresh_known_apps(refresh=True)
+        self.knownAppsChanged.emit()
+
     @Slot(str)
     def deleteProfile(self, name):
         if name == "default":

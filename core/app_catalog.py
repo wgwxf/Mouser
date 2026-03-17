@@ -539,6 +539,24 @@ def _clean_windows_icon_path(value: str):
     return ""
 
 
+def _normalized_windows_name(value: str):
+    return " ".join((value or "").casefold().replace("-", " ").split())
+
+
+def _windows_name_has_helper_terms(value: str):
+    lowered = _normalized_windows_name(value)
+    helper_terms = (
+        "runtime",
+        "webview2",
+        "installer",
+        "updater",
+        "update",
+        "helper",
+        "service",
+    )
+    return any(term in lowered for term in helper_terms)
+
+
 def _iter_windows_uninstall_entries():
     if winreg is None:
         return []
@@ -577,46 +595,69 @@ def _iter_windows_uninstall_entries():
     return entries
 
 
-def _windows_registry_matches(spec: dict, entry: dict):
-    display_name = entry.get("display_name", "").casefold()
+def _windows_registry_match_score(spec: dict, entry: dict):
+    display_name_raw = entry.get("display_name", "")
+    display_name = _normalized_windows_name(display_name_raw)
     display_icon = entry.get("display_icon", "")
     install_location = entry.get("install_location", "")
     executables = {exe.casefold() for exe in spec.get("executables", [])}
-    names = [spec["label"], *spec.get("display_names", []), *spec.get("aliases", [])]
+    names = [
+        _normalized_windows_name(name)
+        for name in [spec["label"], *spec.get("display_names", []), *spec.get("aliases", [])]
+        if name
+    ]
 
-    if any(name.casefold() in display_name for name in names if name):
-        return True
-
-    if display_icon:
-        if os.path.basename(display_icon).casefold() in executables:
-            return True
-
+    if display_icon and os.path.basename(display_icon).casefold() in executables:
+        return 0
     if install_location:
         install_lower = install_location.casefold()
         if any(exe in install_lower for exe in executables):
-            return True
+            return 1
 
-    return False
+    if any(name in display_name for name in names if name):
+        if _windows_name_has_helper_terms(display_name_raw):
+            return -1
+        if any(display_name == name for name in names):
+            return 2
+        if any(display_name.startswith(name + " (") for name in names):
+            return 3
+        if any(display_name.startswith(name + " ") for name in names):
+            return 4
+
+    return -1
+
+
+def _windows_registry_matches(spec: dict, entry: dict):
+    return _windows_registry_match_score(spec, entry) >= 0
 
 
 def _windows_registry_path(spec: dict, registry_entries):
     executables = spec.get("executables", [])
+    executable_names = {exe.casefold() for exe in executables}
+    best_score = None
+    best_path = ""
     for entry in registry_entries:
-        if not _windows_registry_matches(spec, entry):
+        score = _windows_registry_match_score(spec, entry)
+        if score < 0:
             continue
 
         display_icon = entry.get("display_icon", "")
-        if display_icon:
-            return os.path.abspath(display_icon)
+        if display_icon and os.path.basename(display_icon).casefold() in executable_names:
+            candidate = os.path.abspath(display_icon)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_path = candidate
+            continue
 
         install_location = entry.get("install_location", "")
         for executable in executables:
             candidate = os.path.join(install_location, executable)
             usable = _path_if_usable(candidate)
-            if usable:
-                return usable
+            if usable and (best_score is None or score < best_score):
+                best_score = score
+                best_path = usable
 
-    return ""
+    return best_path
 
 
 def _discover_windows_apps():
