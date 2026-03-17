@@ -13,6 +13,8 @@ from typing import Iterable
 
 
 DEFAULT_GESTURE_CIDS = (0x00C3, 0x00D7)
+DEFAULT_DPI_MIN = 200
+DEFAULT_DPI_MAX = 8000
 DEFAULT_BUTTON_LAYOUT = (
     "middle",
     "gesture",
@@ -37,8 +39,8 @@ class LogiDeviceSpec:
     ui_layout: str = "mx_master"
     image_asset: str = "mouse.png"
     supported_buttons: tuple[str, ...] = DEFAULT_BUTTON_LAYOUT
-    dpi_min: int = 200
-    dpi_max: int = 8000
+    dpi_min: int = DEFAULT_DPI_MIN
+    dpi_max: int = DEFAULT_DPI_MAX
 
     def matches(self, product_id=None, product_name=None) -> bool:
         if product_id is not None and int(product_id) in self.product_ids:
@@ -62,8 +64,8 @@ class ConnectedDeviceInfo:
     image_asset: str = "icons/mouse-simple.svg"
     supported_buttons: tuple[str, ...] = DEFAULT_BUTTON_LAYOUT
     gesture_cids: tuple[int, ...] = DEFAULT_GESTURE_CIDS
-    dpi_min: int = 200
-    dpi_max: int = 8000
+    dpi_min: int = DEFAULT_DPI_MIN
+    dpi_max: int = DEFAULT_DPI_MAX
 
 
 # Seeded from Mouser's existing support plus upstream identifiers seen in
@@ -142,6 +144,13 @@ def _normalize_name(value) -> str:
 
 def iter_known_devices() -> Iterable[LogiDeviceSpec]:
     return KNOWN_LOGI_DEVICES
+
+
+def clamp_dpi(value, device=None) -> int:
+    dpi_min = getattr(device, "dpi_min", DEFAULT_DPI_MIN) or DEFAULT_DPI_MIN
+    dpi_max = getattr(device, "dpi_max", DEFAULT_DPI_MAX) or DEFAULT_DPI_MAX
+    dpi = int(value)
+    return max(dpi_min, min(dpi_max, dpi))
 
 
 def resolve_device(product_id=None, product_name=None) -> LogiDeviceSpec | None:

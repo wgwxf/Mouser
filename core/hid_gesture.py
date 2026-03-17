@@ -19,6 +19,7 @@ import time
 from core.logi_devices import (
     DEFAULT_GESTURE_CIDS,
     build_connected_device_info,
+    clamp_dpi,
     resolve_device,
 )
 
@@ -858,10 +859,7 @@ class HidGestureListener:
     def set_dpi(self, dpi_value):
         """Queue a DPI change — will be applied on the listener thread.
         Can be called from any thread.  Returns True on success."""
-        device = self._connected_device_info
-        dpi_min = getattr(device, "dpi_min", 200) or 200
-        dpi_max = getattr(device, "dpi_max", 8000) or 8000
-        dpi = max(dpi_min, min(dpi_max, int(dpi_value)))
+        dpi = clamp_dpi(dpi_value, self._connected_device_info)
         self._dpi_result = None
         self._pending_dpi = dpi
         # Wait up to 3s for the listener thread to apply it

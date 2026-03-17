@@ -3,6 +3,7 @@ import unittest
 from core.logi_devices import (
     DEFAULT_GESTURE_CIDS,
     build_connected_device_info,
+    clamp_dpi,
     resolve_device,
 )
 
@@ -47,6 +48,16 @@ class LogiDeviceRegistryTests(unittest.TestCase):
         self.assertEqual(info.key, "mystery_logitech_mouse")
         self.assertEqual(info.gesture_cids, (0x00F1,))
         self.assertEqual(info.ui_layout, "generic_mouse")
+
+    def test_clamp_dpi_uses_known_device_bounds(self):
+        info = build_connected_device_info(product_id=0xB019)
+
+        self.assertEqual(clamp_dpi(8000, info), 4000)
+        self.assertEqual(clamp_dpi(100, info), 200)
+
+    def test_clamp_dpi_defaults_without_device(self):
+        self.assertEqual(clamp_dpi(100, None), 200)
+        self.assertEqual(clamp_dpi(9000, None), 8000)
 
 
 if __name__ == "__main__":

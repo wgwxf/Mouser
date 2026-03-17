@@ -14,6 +14,7 @@ from core.config import (
     KNOWN_APPS, get_icon_for_exe,
 )
 from core.device_layouts import get_device_layout, get_manual_layout_choices
+from core.logi_devices import DEFAULT_DPI_MAX, DEFAULT_DPI_MIN, clamp_dpi
 from core.key_simulator import ACTIONS
 
 
@@ -57,6 +58,8 @@ class Backend(QObject):
         self._connected_device_key = ""
         self._device_layout_override_key = ""
         self._device_layout = get_device_layout("generic_mouse")
+        self._device_dpi_min = DEFAULT_DPI_MIN
+        self._device_dpi_max = DEFAULT_DPI_MAX
         self._battery_level = -1
         self._debug_lines = []
         self._debug_events_enabled = bool(
@@ -206,6 +209,14 @@ class Backend(QObject):
     def connectedDeviceKey(self):
         return self._connected_device_key
 
+    @Property(int, notify=deviceInfoChanged)
+    def deviceDpiMin(self):
+        return self._device_dpi_min
+
+    @Property(int, notify=deviceInfoChanged)
+    def deviceDpiMax(self):
+        return self._device_dpi_max
+
     @Property(str, notify=deviceLayoutChanged)
     def deviceImageAsset(self):
         return self._device_layout.get("image_asset", "mouse.png")
@@ -328,10 +339,12 @@ class Backend(QObject):
 
     @Slot(int)
     def setDpi(self, value):
-        self._cfg.setdefault("settings", {})["dpi"] = value
+        device = getattr(self._engine, "connected_device", None) if self._engine else None
+        dpi = clamp_dpi(value, device)
+        self._cfg.setdefault("settings", {})["dpi"] = dpi
         save_config(self._cfg)
         if self._engine:
-            self._engine.set_dpi(value)
+            self._engine.set_dpi(dpi)
         self.settingsChanged.emit()
 
     @Slot(bool)
@@ -562,6 +575,8 @@ class Backend(QObject):
     def _apply_device_layout(self, device):
         device_key = getattr(device, "key", "") or ""
         display_name = getattr(device, "display_name", "") or "Logitech mouse"
+        dpi_min = getattr(device, "dpi_min", DEFAULT_DPI_MIN) or DEFAULT_DPI_MIN
+        dpi_max = getattr(device, "dpi_max", DEFAULT_DPI_MAX) or DEFAULT_DPI_MAX
         info_changed = False
         if display_name != self._device_display_name:
             self._device_display_name = display_name
@@ -569,8 +584,24 @@ class Backend(QObject):
         if device_key != self._connected_device_key:
             self._connected_device_key = device_key
             info_changed = True
+        if dpi_min != self._device_dpi_min:
+            self._device_dpi_min = dpi_min
+            info_changed = True
+        if dpi_max != self._device_dpi_max:
+            self._device_dpi_max = dpi_max
+            info_changed = True
         if info_changed:
             self.deviceInfoChanged.emit()
+
+        current_dpi = self._cfg.get("settings", {}).get("dpi", DEFAULT_DPI_MIN)
+        if device is not None:
+            clamped_dpi = clamp_dpi(current_dpi, device)
+            if clamped_dpi != current_dpi:
+                self._cfg.setdefault("settings", {})["dpi"] = clamped_dpi
+                save_config(self._cfg)
+                if self._engine:
+                    self._engine.set_dpi(clamped_dpi)
+                self.settingsChanged.emit()
 
         overrides = self._cfg.get("settings", {}).get("device_layout_overrides", {})
         valid_override_keys = {choice["key"] for choice in get_manual_layout_choices()}
