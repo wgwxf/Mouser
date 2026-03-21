@@ -16,8 +16,7 @@ from urllib.parse import parse_qs, unquote
 
 # Ensure project root on path — works for both normal Python and PyInstaller
 if getattr(sys, "frozen", False):
-    # PyInstaller 6.x: data files are in _internal/ next to the exe
-    ROOT = os.path.join(os.path.dirname(sys.executable), "_internal")
+    ROOT = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
 else:
     ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
@@ -57,6 +56,7 @@ def _print_startup_times():
 def _parse_cli_args(argv):
     qt_argv = [argv[0]]
     hid_backend = None
+    start_hidden = False
     i = 1
     while i < len(argv):
         arg = argv[i]
@@ -70,15 +70,21 @@ def _parse_cli_args(argv):
             hid_backend = arg.split("=", 1)[1].strip().lower()
             i += 1
             continue
+        if arg == "--start-hidden":
+            start_hidden = True
+            i += 1
+            continue
         qt_argv.append(arg)
         i += 1
-    return qt_argv, hid_backend
+    return qt_argv, hid_backend, start_hidden
 
 
 def _app_icon() -> QIcon:
-    """Load the app icon from the pre-cropped .ico file."""
-    ico = os.path.join(ROOT, "images", "logo.ico")
-    return QIcon(ico)
+    """Load the app icon with a macOS-friendly fallback."""
+    icon_path = os.path.join(ROOT, "images", "logo.ico")
+    if sys.platform == "darwin":
+        icon_path = os.path.join(ROOT, "images", "logo_icon.png")
+    return QIcon(icon_path)
 
 
 def _render_svg_pixmap(path: str, color: QColor, size: int) -> QPixmap:
@@ -112,6 +118,28 @@ def _tray_icon() -> QIcon:
     icon = QIcon(_render_svg_pixmap(tray_svg, QColor("#000000"), 18))
     icon.setIsMask(True)
     return icon
+
+
+def _configure_macos_app_mode():
+    if sys.platform != "darwin":
+        return
+    try:
+        import AppKit
+        AppKit.NSApp.setActivationPolicy_(
+            AppKit.NSApplicationActivationPolicyAccessory
+        )
+    except Exception as exc:
+        print(f"[Mouser] Failed to configure macOS app mode: {exc}")
+
+
+def _activate_macos_window():
+    if sys.platform != "darwin":
+        return
+    try:
+        import AppKit
+        AppKit.NSApp.activateIgnoringOtherApps_(True)
+    except Exception as exc:
+        print(f"[Mouser] Failed to activate macOS window: {exc}")
 
 
 class UiState(QObject):
@@ -234,7 +262,7 @@ class SystemIconProvider(QQuickImageProvider):
 def main():
     _print_startup_times()
     _t5 = _time.perf_counter()
-    argv, hid_backend = _parse_cli_args(sys.argv)
+    argv, hid_backend, start_hidden = _parse_cli_args(sys.argv)
     if hid_backend:
         try:
             set_hid_backend_preference(hid_backend)
@@ -246,6 +274,8 @@ def main():
     app.setApplicationName("Mouser")
     app.setOrganizationName("Mouser")
     app.setWindowIcon(_app_icon())
+    app.setQuitOnLastWindowClosed(False)
+    _configure_macos_app_mode()
     ui_state = UiState(app)
 
     # macOS: allow Ctrl+C in terminal to quit the app
@@ -280,6 +310,7 @@ def main():
     qml_engine.addImageProvider("systemicons", SystemIconProvider())
     qml_engine.rootContext().setContextProperty("backend", backend)
     qml_engine.rootContext().setContextProperty("uiState", ui_state)
+    qml_engine.rootContext().setContextProperty("launchHidden", start_hidden)
     qml_engine.rootContext().setContextProperty(
         "applicationDirPath", ROOT.replace("\\", "/"))
 
@@ -292,6 +323,12 @@ def main():
         sys.exit(1)
 
     root_window = qml_engine.rootObjects()[0]
+
+    def show_main_window():
+        root_window.show()
+        root_window.raise_()
+        root_window.requestActivate()
+        _activate_macos_window()
 
     print(f"[Startup] QApp create:      {(_t6-_t5)*1000:7.1f} ms")
     print(f"[Startup] Engine create:    {(_t7-_t6)*1000:7.1f} ms")
@@ -312,11 +349,7 @@ def main():
     tray_menu = QMenu()
 
     open_action = QAction("Open Settings", tray_menu)
-    open_action.triggered.connect(lambda: (
-        root_window.show(),
-        root_window.raise_(),
-        root_window.requestActivate(),
-    ))
+    open_action.triggered.connect(show_main_window)
     tray_menu.addAction(open_action)
 
     toggle_action = QAction("Disable Remapping", tray_menu)
@@ -342,9 +375,7 @@ def main():
         backend.setDebugMode(not backend.debugMode)
         sync_debug_action()
         if backend.debugMode:
-            root_window.show()
-            root_window.raise_()
-            root_window.requestActivate()
+            show_main_window()
 
     debug_action.triggered.connect(toggle_debug_mode)
     tray_menu.addAction(debug_action)
@@ -365,9 +396,7 @@ def main():
 
     tray.setContextMenu(tray_menu)
     tray.activated.connect(lambda reason: (
-        root_window.show(),
-        root_window.raise_(),
-        root_window.requestActivate(),
+        show_main_window()
     ) if reason in (
         QSystemTrayIcon.ActivationReason.Trigger,
         QSystemTrayIcon.ActivationReason.DoubleClick,
