@@ -53,6 +53,11 @@ def _format_debug_details(raw_data):
     return f" value={raw_data}"
 
 
+def _supports_global_remap_device(device) -> bool:
+    key = (getattr(device, "key", "") or "").strip().lower()
+    return key.startswith("mx_master_3")
+
+
 # ==================================================================
 # Windows implementation
 # ==================================================================
@@ -1285,6 +1290,7 @@ elif sys.platform == "darwin":
 
                 mouse_event = None
                 should_block = False
+                should_remap = self._should_remap_pointer_events()
 
                 if (event_type in (
                         Quartz.kCGEventMouseMoved,
@@ -1317,6 +1323,8 @@ elif sys.platform == "darwin":
                     return None
 
                 if event_type == Quartz.kCGEventOtherMouseDown:
+                    if not should_remap:
+                        return cg_event
                     btn = Quartz.CGEventGetIntegerValueField(
                         cg_event, Quartz.kCGMouseEventButtonNumber)
                     if self.debug_mode and self._debug_callback:
@@ -1335,6 +1343,8 @@ elif sys.platform == "darwin":
                         should_block = MouseEvent.XBUTTON2_DOWN in self._blocked_events
 
                 elif event_type == Quartz.kCGEventOtherMouseUp:
+                    if not should_remap:
+                        return cg_event
                     btn = Quartz.CGEventGetIntegerValueField(
                         cg_event, Quartz.kCGMouseEventButtonNumber)
                     if self.debug_mode and self._debug_callback:
@@ -1353,6 +1363,19 @@ elif sys.platform == "darwin":
                         should_block = MouseEvent.XBUTTON2_UP in self._blocked_events
 
                 elif event_type == Quartz.kCGEventScrollWheel:
+                    continuous_field = getattr(
+                        Quartz, "kCGScrollWheelEventIsContinuous", None
+                    )
+                    if continuous_field is not None:
+                        is_continuous = bool(
+                            Quartz.CGEventGetIntegerValueField(
+                                cg_event, continuous_field
+                            )
+                        )
+                        if is_continuous:
+                            return cg_event
+                    if not should_remap:
+                        return cg_event
                     if (
                         Quartz.CGEventGetIntegerValueField(
                             cg_event, Quartz.kCGEventSourceUserData
@@ -1446,6 +1469,9 @@ elif sys.platform == "darwin":
         def _on_hid_disconnect(self):
             self._connected_device = None
             self._set_device_connected(False)
+
+        def _should_remap_pointer_events(self):
+            return _supports_global_remap_device(self._connected_device)
 
         def start(self):
             if not _QUARTZ_OK:
