@@ -29,7 +29,7 @@ if ! iconutil -c icns "$ICONSET_DIR" -o "$ICON_PATH"; then
   rm -f "$ICON_PATH"
 fi
 
-python3 -m PyInstaller "$ROOT_DIR/Mouser-mac.spec" --noconfirm
+python -m PyInstaller "$ROOT_DIR/Mouser-mac.spec" --noconfirm
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$ROOT_DIR/dist/Mouser.app"

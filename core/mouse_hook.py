@@ -55,7 +55,9 @@ def _format_debug_details(raw_data):
 
 def _supports_global_remap_device(device) -> bool:
     key = (getattr(device, "key", "") or "").strip().lower()
-    return key.startswith("mx_master_3")
+    if key.startswith("mx_master"):
+        return True
+    return key.endswith("_receiver")
 
 
 # ==================================================================
@@ -854,6 +856,13 @@ if sys.platform == "win32":
             self._connected_device = (
                 self._hid_gesture.connected_device if self._hid_gesture else None
             )
+            device = self._connected_device
+            self._emit_debug(
+                "Detected device "
+                f"key={getattr(device, 'key', '') or '<empty>'} "
+                f"name={getattr(device, 'display_name', '') or '<unknown>'} "
+                f"remap_allowed={_supports_global_remap_device(device)}"
+            )
             self._set_device_connected(True)
 
         def _on_hid_disconnect(self):
@@ -1463,6 +1472,13 @@ elif sys.platform == "darwin":
         def _on_hid_connect(self):
             self._connected_device = (
                 self._hid_gesture.connected_device if self._hid_gesture else None
+            )
+            device = self._connected_device
+            self._emit_debug(
+                "Detected device "
+                f"key={getattr(device, 'key', '') or '<empty>'} "
+                f"name={getattr(device, 'display_name', '') or '<unknown>'} "
+                f"remap_allowed={_supports_global_remap_device(device)}"
             )
             self._set_device_connected(True)
 
