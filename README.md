@@ -12,6 +12,36 @@ No telemetry. No cloud. No Logitech account required.
 
 ---
 
+## Origin & Upgrades
+
+This project is based on and inspired by the original
+[TomBadash/Mouser](https://github.com/TomBadash/Mouser).
+
+Respect to **TomBadash** and contributors for building the open-source
+foundation that made this branch possible.
+
+### Upgrade Highlights / 本次更新
+
+#### English
+
+- **Native macOS app bundle for Apple Silicon** — added a dedicated macOS PyInstaller flow that produces a directly runnable `Mouser.app`
+- **Start at login on macOS** — added LaunchAgent-based auto-start with optional hidden startup
+- **Menu bar style macOS behavior** — closing the settings window keeps Mouser alive in the tray without lingering in the Dock
+- **Desktop switching actions** — added previous/next desktop actions for horizontal scroll mappings
+- **Horizontal scroll desktop switching fix** — reduced over-triggering so one wheel gesture no longer jumps across many desktops
+- **Connection state sync hardening** — improved startup state propagation so the UI is less likely to get stuck on stale "Waiting for connection" status
+- **MX Master 3-only remapping on macOS** — limited pointer remapping to the MX Master 3 family so Apple Magic Trackpad continuous scrolling is no longer affected
+
+#### 中文
+
+- **新增 Apple Silicon 原生 macOS 应用打包**：增加了专用的 macOS PyInstaller 流程，可直接生成并运行 `Mouser.app`
+- **新增 macOS 开机自启**：通过 LaunchAgent 实现登录后自动启动，并支持隐藏启动
+- **优化 macOS 菜单栏常驻行为**：关闭设置窗口后程序继续驻留托盘，但不再停留在 Dock 中
+- **新增桌面切换动作**：横向滚轮现在可以映射为“切换到上一个桌面 / 下一个桌面”
+- **修复横向滚轮切换桌面过度触发**：一次滚轮手势不再连续跳过多个桌面
+- **增强连接状态同步**：改善启动阶段的状态回传，减少界面卡在 “Waiting for connection” 的情况
+- **将 macOS remap 限定为 MX Master 3 系列**：苹果妙控触控板的连续滚动不再被这套映射逻辑误伤
+
 ## Features
 
 - **macOS support** — full macOS compatibility using CGEventTap for mouse hooking, Quartz CGEvent for key simulation, and NSWorkspace for app detection. See [macOS Setup Guide](readme_mac_osx.md) for details.
@@ -403,6 +433,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Acknowledgments
 
+- **[TomBadash/Mouser](https://github.com/TomBadash/Mouser)** — original project, core direction, and the open-source base this upgraded branch builds on
 - **[@andrew-sz](https://github.com/andrew-sz)** — macOS port: CGEventTap mouse hooking, Quartz key simulation, NSWorkspace app detection, and NSEvent media key support
 - **[@thisislvca](https://github.com/thisislvca)** — significant expansion of the project including macOS compatibility improvements, multi-device support, new UI features, and active involvement in triaging and resolving open issues
 
