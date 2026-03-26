@@ -552,6 +552,7 @@ class HidGestureListener:
         self._dev_idx   = BT_DEV_IDX
         self._gesture_cid = DEFAULT_GESTURE_CID
         self._gesture_candidates = list(DEFAULT_GESTURE_CIDS)
+        self._gesture_report_cids = set(DEFAULT_GESTURE_CIDS)
         self._held      = False
         self._connected = False         # True while HID++ device is open
         self._rawxy_enabled = False
@@ -1016,7 +1017,7 @@ class HidGestureListener:
             cids.add(c)
             i += 2
 
-        gesture_now = self._gesture_cid in cids
+        gesture_now = bool(cids & self._gesture_report_cids)
 
         if gesture_now and not self._held:
             self._held = True
@@ -1072,6 +1073,7 @@ class HidGestureListener:
             self._gesture_candidates = list(
                 getattr(device_spec, "gesture_cids", ()) or DEFAULT_GESTURE_CIDS
             )
+            self._gesture_report_cids = set(self._gesture_candidates)
             self._rawxy_enabled = False
             open_attempts = []
             if _BACKEND_PREFERENCE in ("auto", "hidapi") and info.get("path"):
@@ -1132,6 +1134,7 @@ class HidGestureListener:
                         controls,
                         device_spec=device_spec,
                     )
+                    self._gesture_report_cids = set(self._gesture_candidates)
                     print("[HidGesture] Gesture CID candidates: "
                           + ", ".join(_format_cid(cid) for cid in self._gesture_candidates))
                     # Also discover ADJUSTABLE_DPI
@@ -1220,6 +1223,7 @@ class HidGestureListener:
             self._held = False
             self._gesture_cid = DEFAULT_GESTURE_CID
             self._gesture_candidates = list(DEFAULT_GESTURE_CIDS)
+            self._gesture_report_cids = set(DEFAULT_GESTURE_CIDS)
             self._rawxy_enabled = False
             self._connected_device_info = None
             if self._connected:

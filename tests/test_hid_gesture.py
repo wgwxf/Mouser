@@ -48,5 +48,23 @@ class GestureCandidateSelectionTests(unittest.TestCase):
         )
 
 
+class GestureReportHandlingTests(unittest.TestCase):
+    def test_on_report_accepts_any_gesture_candidate_cid(self):
+        events = []
+        listener = hid_gesture.HidGestureListener(
+            on_down=lambda: events.append("down"),
+            on_up=lambda: events.append("up"),
+        )
+        listener._feat_idx = 0x05
+        listener._gesture_cid = 0x00C3
+        listener._gesture_candidates = [0x00C3, 0x00D7]
+        listener._gesture_report_cids = set(listener._gesture_candidates)
+
+        listener._on_report([hid_gesture.SHORT_ID, 0xFF, 0x05, hid_gesture.MY_SW, 0x00, 0xD7, 0x00, 0x00])
+        listener._on_report([hid_gesture.SHORT_ID, 0xFF, 0x05, hid_gesture.MY_SW, 0x00, 0x00])
+
+        self.assertEqual(events, ["down", "up"])
+
+
 if __name__ == "__main__":
     unittest.main()
